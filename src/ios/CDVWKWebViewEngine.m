@@ -299,7 +299,7 @@
     if ([settings cordovaBoolSettingForKey:@"KeyboardAppearanceDark" defaultValue:NO]) {
         [self setKeyboardAppearanceDark];
     }
-    
+
     #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 160400
         // With the introduction of iOS 16.4 the webview is no longer inspectable by default.
         // We'll honor that change for release builds, but will still allow inspection on debug builds by default.
@@ -736,53 +736,80 @@
 
 - (void) webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction*)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
 {
-    NSURL* url = [navigationAction.request URL];
-    CDVViewController* vc = (CDVViewController*)self.viewController;
+    NSURL *url = navigationAction.request.URL;
+    CDVViewController *viewController = (CDVViewController *)self.viewController;
+
+    NSURLRequest *request = navigationAction.request;
+    CDVWebViewNavigationType navigationType = (CDVWebViewNavigationType)navigationAction.navigationType;
+
+    // https://issues.apache.org/jira/browse/CB-12497
+    if (navigationAction.navigationType == WKNavigationTypeOther) {
+    #ifdef __CORDOVA_6_0_0
+        navigationType = -1;
+    #else
+        navigationType = 5;
+    #endif
+    }
+
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[@"sourceFrame"] = navigationAction.sourceFrame;
+    info[@"targetFrame"] = navigationAction.targetFrame;
 
     /*
-     * Give plugins the chance to handle the url
+     * Permet aux plugins Cordova d'intercepter et gérer la navigation.
      */
-    BOOL anyPluginsResponded = NO;
+    BOOL pluginHasHandledRequest = NO;
     BOOL shouldAllowRequest = NO;
 
-    for (NSString* pluginName in vc.pluginObjects) {
-        CDVPlugin* plugin = [vc.pluginObjects objectForKey:pluginName];
-        SEL selector = NSSelectorFromString(@"shouldOverrideLoadWithRequest:navigationType:");
-        if ([plugin respondsToSelector:selector]) {
-            anyPluginsResponded = YES;
-            // https://issues.apache.org/jira/browse/CB-12497
-            int navType = (int)navigationAction.navigationType;
-            if (WKNavigationTypeOther == navigationAction.navigationType) {
-                #ifdef __CORDOVA_6_0_0
-                    navType = -1;
-                #else
-                    navType = 5;
-                #endif
+    for (NSString *pluginName in viewController.pluginObjects) {
+        CDVPlugin *plugin = viewController.pluginObjects[pluginName];
+        BOOL respondsToModernSelector = [plugin respondsToSelector: @selector(shouldOverrideLoadWithRequest:navigationType:info:)];
+        BOOL respondsToLegacySelector = [plugin respondsToSelector: @selector(shouldOverrideLoadWithRequest:navigationType:)];
+
+        if (respondsToModernSelector || respondsToLegacySelector) {
+            pluginHasHandledRequest = YES;
+            id<CDVPluginNavigationHandler> navigationPlugin = (id<CDVPluginNavigationHandler>)plugin;
+
+            if (respondsToModernSelector) {
+                shouldAllowRequest = [navigationPlugin shouldOverrideLoadWithRequest:request navigationType:navigationType info:info];
+            } else {
+              #pragma clang diagnostic push
+              #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+              shouldAllowRequest = [navigationPlugin shouldOverrideLoadWithRequest:request navigationType:navigationType];
+              #pragma clang diagnostic pop
             }
-            shouldAllowRequest = (((BOOL (*)(id, SEL, id, int))objc_msgSend)(plugin, selector, navigationAction.request, navType));
+
+            // Un plugin a refusé la requête
             if (!shouldAllowRequest) {
                 break;
             }
         }
     }
 
-    if (!anyPluginsResponded) {
-        /*
-         * Handle all other types of urls (tel:, sms:), and requests to load a url in the main webview.
-         */
+    /*
+     * Aucun plugin n’a répondu :
+     * application de la politique par défaut Cordova.
+     */
+    if (!pluginHasHandledRequest) {
         shouldAllowRequest = [self defaultResourcePolicyForURL:url];
         if (!shouldAllowRequest) {
-            [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVPluginHandleOpenURLNotification object:url]];
+            [[NSNotificationCenter defaultCenter] postNotification: [NSNotification notificationWithName: CDVPluginHandleOpenURLNotification object:url]];
         }
     }
 
+    /*
+     * Gestion finale de la navigation.
+     */
     if (shouldAllowRequest) {
-        NSString *scheme = url.scheme;
-        if ([scheme isEqualToString:@"tel"] ||
-            [scheme isEqualToString:@"mailto"] ||
+        NSString *scheme = url.scheme.lowercaseString;
+
+        BOOL isExternalScheme = [scheme isEqualToString:@"tel"] ||
+            [scheme isEqualToString:@"mailto"]   ||
             [scheme isEqualToString:@"facetime"] ||
             [scheme isEqualToString:@"sms"] ||
-            [scheme isEqualToString:@"maps"]) {
+            [scheme isEqualToString:@"maps"];
+
+        if (isExternalScheme) {
             [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
             decisionHandler(WKNavigationActionPolicyCancel);
         } else {
