@@ -1,3 +1,9 @@
+# # [5.0.3](https://github.com/ionic-team/cordova-plugin-ionic-webview/compare/master...magellandevs:cordova-plugin-ionic-webview:master) (2026-05-22)
+
+### Bug Fixes
+
+* **ios:** add statusBarBackground on webview
+
 # [5.0.1](https://github.com/ionic-team/cordova-plugin-ionic-webview/compare/v5.0.0...v5.0.1) (2023-08-29)
 
 ### Features

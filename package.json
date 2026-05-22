@@ -11,9 +11,6 @@
     "type": "git",
     "url": "https://github.com/magellandevs/cordova-plugin-ionic-webview"
   },
-  "bugs": {
-    "url": "https://github.com/magellandevs/cordova-plugin-ionic-webview/issues"
-  },
   "keywords": [
     "cordova",
     "wkwebview"
